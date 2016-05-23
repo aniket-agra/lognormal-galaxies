@@ -69,6 +69,9 @@ def file_len(fname):
 pkfname = 'wavenumber_pk.txt'			#name of theory P(k) file
 npk = file_len(pkfname)				#length of above file
 print 'number of data in '+pkfname+' is '+str(npk)
+ncol = 2							#no of columns in P(k) file
+kcol = 1							#column no for wavenumber
+pkcol = 2							#column no for power spectrum to be discretized
 Rs = 0.1                                        #smoothing radius if used for smoothing power spectrum
 bias = 1.455                                   
 ofname = 'discrete_'+pkfname                   	
@@ -77,4 +80,4 @@ Ly = 1486
 Lz = 734
 nmesh = 1024					#please use the same as used for measuring P(k)
 p1fname = 'params_discretize_pk.dat'
-executable('aux_codes/discretize_pk')([pkfname, npk, Rs, bias, ofname, Lx, Ly, Lz, nmesh, p1fname])    
+executable('aux_codes/discretize_pk')([pkfname, npk, ncol, kcol, pkcol, Rs, bias, ofname, Lx, Ly, Lz, nmesh, p1fname])    

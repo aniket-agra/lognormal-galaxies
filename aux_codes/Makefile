@@ -12,7 +12,7 @@ default: $(TARGET)
 
 calc_xi_gm: ../compute_pkG/integration_modified.o calc_xi_gm.o
 	$(CXX) -o $@ $^ $(LINK)
-discretize_pk: discretize_pk.o
+discretize_pk: ../generate_Poisson/spline.o discretize_pk.o
 	$(CXX) -o $@ $^ $(LINK)
 kaiser_pk: ../generate_Poisson/spline.o kaiser_pk.o 
 	$(CXX) -o $@ $^ $(LINK)

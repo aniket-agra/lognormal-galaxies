@@ -120,7 +120,8 @@ if params['calc_pk']:
 			params_tmp['imul_fname'] = params['out_dir']+'/coupling/'+params['ofile_prefix']+'_coupling.bin'
 		params_tmp['pk_fname'] = params['out_dir']+'/pk/'+params['ofile_prefix']+'_pk_rlz'+str(i)+'.dat'
 
-		args = ['halofname','Pnmax','aH','losx','losy','losz','kbin','kmax','lmax','imul_fname','pk_fname','calc_mode_pk']
+		args = ['halofname','Pnmax','aH','losx','losy','losz','kbin','kmax','lmax','imul_fname','pk_fname','calc_mode_pk',\
+				'flag_mass_assign', 'num_interlacing']
 		exe.run('calculate_pk/calc_pk_const_los_ngp',args,params_tmp)
 
 	p = Pool(params['num_para']) 

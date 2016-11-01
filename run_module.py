@@ -23,6 +23,7 @@ def read_params(ini_fname):
 			  'kbin':0.01,'kmax':0.,'lmax':4,\
 			  'gen_inputs':False,'run_lognormal':False,'calc_pk':False,\
 			  'calc_mode_pk':0,\
+			  'num_interlacing':1, 'flag_mass_assign':0,
 			  'out_dir':'\./data',\
 			  'halofname_prefix':'',\
 			  'imul_fname':'',\

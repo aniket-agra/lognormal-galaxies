@@ -10,7 +10,12 @@
 
 	19 May 2012
 	Donghui Jeong
-	[v2] Generate velocities from the matter density, rather than the galaxy density divided by the linear bias, by Aniket Agrawal, March 2016
+
+	[v2] Generate velocities from the matter density, rather than the galaxy density divided by the linear bias, 
+        by Aniket Agrawal, March 2016
+
+        [v3] Generate weight 
+	by Shun Saito, Oct 2017
 */
 
 #include <iostream>
@@ -36,6 +41,10 @@ string cpkGfname;
 double lengthx,lengthy,lengthz;
 int nmax;
 int Ngalaxies;
+int choose_X;
+int numbin_X;
+double Xmin;
+double Xmax;
 double aH;
 string ffname;
 double bias;
@@ -55,9 +64,19 @@ void calc_deltak(double pkG, double mpkG, double cpkG, double factor,
 				 double *deltak, double *deltamk, const gsl_rng *r);
 void interpolation(string ifname, int ndata, gsl_spline *pk);
 
+double funcLF_Schechter(double logL_in, double phi0, double logL0, double alpha);
+
+inline double funcLF_Schechter(double log10L_in, double phi0, double log10L0, double alpha)
+{
+  double x;
+  x = pow(10., log10L_in-log10L0);
+  return phi0 * log(10.) * pow(x,alpha+1.) * exp(-x);
+}
+
 int main(int argc, char* argv[])
 {
 
+        cout << argc << endl;
 	ReadParams(argc, argv);
 
 	// count the line number of input files
@@ -85,6 +104,65 @@ int main(int argc, char* argv[])
 	cout << "Setting up the arrays......."<<endl;
 	double max_xy = lengthx > lengthy? lengthx: lengthy; 
 	double maxlength = lengthz > max_xy? lengthz: max_xy;
+
+
+// -------------------------------------------------------------------------
+//calculate weighting array
+// -------------------------------------------------------------------------
+	// arr_weight[iX, 0]: median value of X in iX-th bin
+	// arr_weight[iX, 1]: number density in iX-th bin
+	// arr_weight[iX, 2]: weight in iX-th bin
+	double arr_weight[numbin_X][3]; 
+	int ibin;
+	double DX;
+	double Xin;
+	double nsum;
+	int Ngalaxies;
+	double Xsum;
+	double Xmean;
+	
+	DX = (Xmax - Xmin)/numbin_X;
+	for (ibin = 0; ibin < numbin_X; ibin++){
+	  Xin = Xmin + DX*(ibin + 0.5);
+	  arr_weight[ibin][0] = Xin;
+	  
+	  // number density should be [(h/Mpc)^3]
+	  arr_weight[ibin][1] = DX*funcLF_Schechter(Xin, 6.32E-4/pow(0.704, 3.), 42.7234, -1.75);
+
+	  if (choose_X==1){
+	    arr_weight[ibin][2] = 1.;
+	  }
+	  else{
+	    // weight here by Luminosity: L = 10.**X
+	    arr_weight[ibin][2] = pow(10., Xin);
+	  }
+	}
+	nsum = 0.;
+	Xsum = 0.; 
+	for (ibin = 0; ibin < numbin_X; ibin++){
+	  nsum += arr_weight[ibin][1];
+	  Xsum += arr_weight[ibin][2]*arr_weight[ibin][1];
+	  // X2sum += arr_weight[ibin][2]*arr_weight[ibin][2]*arr_weight[ibin][1];
+	}
+	Xmean = Xsum/double(nsum);
+	Ngalaxies = int(nsum*lengthx*lengthy*lengthz);
+
+	if (choose_X==1) {
+	  cout << "weighting scheme: number density" << endl;
+	} else {
+	  cout << "weighting scheme: LAE luminosity, assuming LF in Konno+(2016)" << endl;
+	}
+	cout << "weighting function computed:" << endl;
+	cout << "   range: " << Xmin << " <= X <= " << Xmax << endl;
+	cout << "   n_tot [(h/Mpc)^3]: " << nsum << endl;
+	cout << "   N_tot = n_tot * V_s: " << Ngalaxies << endl;
+	cout << "   mean rho_X: " << Xsum << endl;
+	cout << "   mean X: " << Xmean << endl;
+	cout << "   log10(mean X): " << log10(Xmean) << endl;
+	cout << " " << endl;
+
+
+  
 // -------------------------------------------------------------------------
 // Allocating the array
 //
@@ -135,15 +213,18 @@ int main(int argc, char* argv[])
 	fftw_init_threads();
 	fftw_plan_with_nthreads(nproc);
 
-	fftw_complex *deltak, *deltamk;// complex array in k-space	//modified by Aniket
-	double *deltar, *deltamr; 	// storage arrays for positions and velocities	//modified by Aniket
+	fftw_complex *deltak, *deltamk, *weighted_rho_k;;// complex array in k-space	
+	double *deltar, *deltamr; 	// storage arrays for positions and velocities 
+	double *weighted_rho_r;
 
 	deltak = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * Nc);
 	deltamk = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * Nc);	//modified by Aniket
+	weighted_rho_k = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * Nc);
 
 	// aliasing to the double pointer deltar and deltamr for in-place tranform
 	deltar = (double *)deltak;
 	deltamr = (double *)deltamk;	//modified by Aniket
+	weighted_rho_r = (double *) weighted_rho_k;
 
 	fftw_plan Pfftw_c2r, mPfftw_c2r;	//modified by Aniket
 	Pfftw_c2r = fftw_plan_dft_c2r_3d(n0, n1, n2, deltak, deltar, FFTW_ESTIMATE);
@@ -508,12 +589,12 @@ int main(int argc, char* argv[])
 // -------------------------------------------------------------------------	
 	float xx,yy,zz;
 	long double vx,vy,vz;
-	float* galdata = new float[6*Ngalaxies*2];
+	float* galdata = new float[7*Ngalaxies*2];
 	double urand;
 
 	cout << "Generating Poisson particles..........."<<endl;
 
-	long double ngalbar = (long double)(Ngalaxies)/(long double)(Ntotal);
+	//long double ngalbar = (long double)(Ngalaxies)/(long double)(Ntotal);
 
 	long double avg_vx = 0;
 	long double var_vx = 0;
@@ -527,8 +608,12 @@ int main(int argc, char* argv[])
 	long double var_vz = 0;
 	double vz_min = 1e5;
 	double vz_max = -1e5;
+	float weight_log10 = 0.;
 
 	int nPoisson = 0;
+	double Nthiscell[numbin_X];
+	int Nthiscell_int[numbin_X];
+	int Nthiscell_int_tot;
 	for(int i0 = 0; i0 < n0; i0++){
 		for(int i1 = 0; i1 < n1; i1++){
 			for(int i2 = 0; i2 < n2; i2++){
@@ -538,41 +623,74 @@ int main(int argc, char* argv[])
 				double ymin_thiscell = i1 * Dbin;
 				double zmin_thiscell = i2 * Dbin;
 
-				double Nthiscell = ngalbar*(1.+deltar[ijk]);
-				int Nthiscell_int = gsl_ran_poisson(rselect,Nthiscell);
+				//double Nthiscell = ngalbar*(1.+deltar[ijk]);
+				//int Nthiscell_int = gsl_ran_poisson(rselect,Nthiscell);
+
+				weighted_rho_r[ijk] = 0.;
+				Nthiscell_int_tot = 0;
 
 				vx = vxr[ijk]*d3k;	//modified by Aniket
 				vy = vyr[ijk]*d3k;	//modified by Aniket
 				vz = vzr[ijk]*d3k;	//modified by Aniket
 
-				for(int ithiscell=0;ithiscell<Nthiscell_int;ithiscell++){
+				//for(int ithiscell=0;ithiscell<Nthiscell_int;ithiscell++){
+				//	urand = gsl_rng_uniform(rpos);
+				//	xx = xmin_thiscell + urand * Dbin;
+				//	urand = gsl_rng_uniform(rpos);
+				//	yy = ymin_thiscell + urand * Dbin;
+				//	urand = gsl_rng_uniform(rpos);
+				//	zz = zmin_thiscell + urand * Dbin;
+				//	// store position of this galaxy into array
+				//	galdata[6*nPoisson  ] = xx;
+				//	galdata[6*nPoisson+1] = yy;
+				//	galdata[6*nPoisson+2] = zz;
+				//	galdata[6*nPoisson+3] = vx;
+				//	galdata[6*nPoisson+4] = vy;
+				//	galdata[6*nPoisson+5] = vz;
+				//	nPoisson++;
+				//
+				//	avg_vx += vx;
+				//	avg_vy += vy;
+				//	avg_vz += vz;
+				//	var_vx += vx*vx;
+				//	var_vy += vy*vy;
+				//	var_vz += vz*vz;
+				//	if (vx<=vx_min) vx_min = vx;
+				//	if (vy<=vy_min) vy_min = vy;
+				//	if (vz<=vz_min) vz_min = vz;
+				//	if (vx>=vx_max) vx_max = vx;
+				//	if (vy>=vy_max) vy_max = vy;
+				//	if (vz>=vz_max) vz_max = vz;
+				//}
+
+				for (ibin = 0; ibin < numbin_X; ibin++){
+				  // Dbin**3. is the volume factor
+				  Nthiscell[ibin] = arr_weight[ibin][1]*(1.+deltar[ijk])*pow(Dbin,3.);
+				  Nthiscell_int[ibin] = gsl_ran_poisson(rselect,Nthiscell[ibin]);
+				  Nthiscell_int_tot += Nthiscell_int[ibin];
+				  //Poisson sample version
+				  weighted_rho_r[ijk] += Nthiscell_int[ibin]*arr_weight[ibin][2];
+				  //directly related version to deltar
+				  //weighted_rho_r[ijk] += Nthiscell[ibin]*arr_weight[ibin][2];
+				  for(int ithiscell=0;ithiscell<Nthiscell_int[ibin];ithiscell++){
 					urand = gsl_rng_uniform(rpos);
 					xx = xmin_thiscell + urand * Dbin;
 					urand = gsl_rng_uniform(rpos);
 					yy = ymin_thiscell + urand * Dbin;
 					urand = gsl_rng_uniform(rpos);
 					zz = zmin_thiscell + urand * Dbin;
+					weight_log10 = log10(arr_weight[ibin][2]);
 					// store position of this galaxy into array
-					galdata[6*nPoisson  ] = xx;
-					galdata[6*nPoisson+1] = yy;
-					galdata[6*nPoisson+2] = zz;
-					galdata[6*nPoisson+3] = vx;
-					galdata[6*nPoisson+4] = vy;
-					galdata[6*nPoisson+5] = vz;
+					galdata[7*nPoisson  ] = xx;
+					galdata[7*nPoisson+1] = yy;
+					galdata[7*nPoisson+2] = zz;
+					galdata[7*nPoisson+3] = vx;
+					galdata[7*nPoisson+4] = vy;
+					galdata[7*nPoisson+5] = vz;
+					galdata[7*nPoisson+6] = weight_log10;
+					//cout << xx  << ' '  << galdata[7*nPoisson] << ' '  << galdata[7*nPoisson+6] << endl;
 					nPoisson++;
-
-					avg_vx += vx;
-					avg_vy += vy;
-					avg_vz += vz;
-					var_vx += vx*vx;
-					var_vy += vy*vy;
-					var_vz += vz*vz;
-					if (vx<=vx_min) vx_min = vx;
-					if (vy<=vy_min) vy_min = vy;
-					if (vz<=vz_min) vz_min = vz;
-					if (vx>=vx_max) vx_max = vx;
-					if (vy>=vy_max) vy_max = vy;
-					if (vz>=vz_max) vz_max = vz;
+				  }
 				}
 			}
 		}
@@ -610,7 +728,7 @@ int main(int argc, char* argv[])
 	fout.write((char*) &Ly, sizeof(double));
 	fout.write((char*) &Lz, sizeof(double));
 	fout.write((char*) &nPoisson, sizeof(int));
-	fout.write((char*) galdata, sizeof(float)*6*nPoisson);
+	fout.write((char*) galdata, sizeof(float)*7*nPoisson);
 	fout.close();
 
 	delete [] galdata;
@@ -655,14 +773,21 @@ void ReadParams(int argc, char* argv[]){
                     "[1st: k in units of h/Mpc; 2nd: P(k) in units of Mpc^3/h^3]" << endl;
 			cin >> cpkGfname;
 		}else{
+		        cin >> cpkGfname;
 			cpkGfname = mpkGfname; // dummy
 		}
 		cout << "Please enter the length of the Fourier box in x, y, and z:" << endl;
 		cin >> lengthx >> lengthy >> lengthz;
 		cout << "Please enter the maximum size of Fourier grid (1D) !" << endl;
 		cin >> nmax;
-		cout << "Please enter the total number of galaxies to sample!" << endl;
-		cin >> Ngalaxies;
+		//cout << "Please enter the total number of galaxies to sample!" << endl;
+		//cin >> Ngalaxies;
+		
+		cin >> choose_X;
+		cin >> numbin_X;
+		cin >> Xmin;
+		cin >> Xmax;
+		
 		cout << "Please enter the velocity to distance factor (aH) [km/s/(Mpc/h)]:" << endl;
 		cin >> aH;
 		cout << "Please enter the logarithmic growth rate file [1st: k in units of h/Mpc; 2nd: f(k,z)]:" << endl;
@@ -678,20 +803,20 @@ void ReadParams(int argc, char* argv[]){
 		cout << "Output the galaxy catalog? (0:no, 1:yes)" << endl;
 		cin >> output_gal;
 		if (output_gal == 1){
-     		cout << "Please enter the output file name to store the galaxy catalog!" <<endl;
-	    	cin >> Poissonfname;
+     		        cout << "Please enter the output file name to store the galaxy catalog!" <<endl;
+	    	        cin >> Poissonfname;
 		}else{
 			Poissonfname = "dummy.dat"; // dummy
 		}
 		cout << "Output the matter density file? (0:no, 1:yes)" << endl;
 		cin >> output_matter;
 		if (output_matter == 1){
-     		cout << "Please enter the output file name to store the matter density!" <<endl;
-	    	cin >> Densityfname;
+     		        cout << "Please enter the output file name to store the matter density!" <<endl;
+	    	        cin >> Densityfname;
 		}else{
 			Densityfname = "dummy.dat"; // dummy
 		}
-	}else if (argc == 20){
+	}else if (argc == 22){
 		pkGfname = argv[1];
 		mpkGfname = argv[2];
 		if(check_int(argv[3],"use_cpkG")) use_cpkG = atoi(argv[3]);
@@ -703,28 +828,35 @@ void ReadParams(int argc, char* argv[]){
 		if(check_float(argv[5],"lengthx")) lengthx = atof(argv[5]);
 		if(check_float(argv[6],"lengthy")) lengthy = atof(argv[6]);
 		if(check_float(argv[7],"lengthz")) lengthz = atof(argv[7]);
+		cout << lengthx << endl;
 		if(check_int(argv[8],"nmax")) nmax = atoi(argv[8]);
-		if(check_int(argv[9],"Ngalaxies")) Ngalaxies = atoi(argv[9]);
-		if(check_float(argv[10],"aH")) aH = atof(argv[10]);
-		ffname = argv[11];
-		if(check_float(argv[12],"bias")) bias = atof(argv[12]);
-		if(check_int(argv[13],"seed")) seed = atoi(argv[13]);
-		if(check_int(argv[14],"Pseed")) Pseed = atoi(argv[14]);
-		if(check_int(argv[15],"useed")) useed = atoi(argv[15]);
-		Poissonfname = argv[16];
-		Densityfname = argv[17];
-		if(check_int(argv[18],"output_matter")) output_matter = atoi(argv[18]);
+		//if(check_int(argv[9],"Ngalaxies")) Ngalaxies = atoi(argv[9]);
+		
+		if(check_int(argv[9], "do_weight_LAE")) choose_X = atoi(argv[9]);
+		if(check_int(argv[10],"numbin_log10L")) numbin_X = atoi(argv[10]);
+		if(check_float(argv[11],"log10Lmin")) Xmin = atof(argv[11]);
+		if(check_float(argv[12],"log10Lmax")) Xmax = atof(argv[12]);
+		
+		if(check_float(argv[13],"aH")) aH = atof(argv[13]);
+		ffname = argv[14];
+		if(check_float(argv[15],"bias")) bias = atof(argv[15]);
+		if(check_int(argv[16],"seed")) seed = atoi(argv[16]);
+		if(check_int(argv[17],"Pseed")) Pseed = atoi(argv[17]);
+		if(check_int(argv[18],"useed")) useed = atoi(argv[18]);
+		Poissonfname = argv[19];
+		Densityfname = argv[20];
+		if(check_int(argv[21],"output_matter")) output_matter = atoi(argv[21]);
 		if(output_matter != 0 and output_matter != 1){
 			cout << "output_matter should be 0 or 1!!!" << endl;
 			exit(1);
 		}
-		if(check_int(argv[19],"output_gal")) output_gal = atoi(argv[19]);
+		if(check_int(argv[22],"output_gal")) output_gal = atoi(argv[22]);
 		if(output_gal != 0 and output_gal != 1){
 			cout << "output_gal should be 0 or 1!!!" << endl;
 			exit(1);
 		}
 	}else{
-		cout << "number of arguments should be 0 or 19!!!" << endl;
+		cout << "number of arguments should be 0 or 21!!!" << endl;
 		exit(1);
 	}
 }
